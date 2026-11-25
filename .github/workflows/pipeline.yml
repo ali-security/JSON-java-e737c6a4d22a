@@ -4,22 +4,28 @@
 name: Java CI with Maven
 
 on:
-  push:
-    # branches: [ master ]
-  pull_request:
-    branches: [ master ]
+  workflow_dispatch:
+    inputs:
+      test-filter:
+        description: 'Optional surefire -Dtest filter'
+        required: false
+        default: ''
 
 jobs:
   # old-school build and jar method. No tests run or compiled.
   build-1_6: 
     name: Java 1.6
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      - name: Download Zulu JDK 1.6
+        run: curl -sSLf -o "$RUNNER_TEMP/zulu6.tar.gz" https://cdn.azul.com/zulu/bin/zulu6.22.0.3-jdk6.0.119-linux_x64.tar.gz
       - name: Setup java
         uses: actions/setup-java@v1
         with:
           java-version: 1.6
+          jdkFile: ${{ runner.temp }}/zulu6.tar.gz
       - name: Compile Java 1.6
         run: |
           mkdir -p target/classes
@@ -30,7 +36,7 @@ jobs:
           jar cvf target/org.json.jar -C target/classes .
       - name: Upload JAR 1.6
         if: ${{ always() }}
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: Create java 1.6 JAR
           path: target/*.jar
@@ -44,6 +50,9 @@ jobs:
         # build against supported Java LTS versions:
         java: [ 8 ]
     name: Java ${{ matrix.java }}
+    timeout-minutes: 40
+    env:
+      MAVEN_OPTS: -Xss4m
     steps:
       - uses: actions/checkout@v3
       - name: Set up JDK ${{ matrix.java }}
@@ -56,7 +65,26 @@ jobs:
         run: mvn clean compile -D maven.compiler.source=${{ matrix.java }} -D maven.compiler.target=${{ matrix.java }} -D maven.test.skip=true -D maven.site.skip=true -D maven.javadoc.skip=true
       - name: Run Tests ${{ matrix.java }}
         run: |
-          mvn test -D maven.compiler.source=${{ matrix.java }} -D maven.compiler.target=${{ matrix.java }}
+          if [ -n "${{ inputs.test-filter }}" ]; then
+            mvn test -D maven.compiler.source=${{ matrix.java }} -D maven.compiler.target=${{ matrix.java }} -D test="${{ inputs.test-filter }}" -D failIfNoTests=false -D surefire.failIfNoSpecifiedTests=false
+          else
+            mvn test -D maven.compiler.source=${{ matrix.java }} -D maven.compiler.target=${{ matrix.java }}
+          fi
+      - name: List Skipped Tests ${{ matrix.java }}
+        if: ${{ always() }}
+        run: |
+          python3 - <<'PY'
+          import glob, xml.etree.ElementTree as ET
+          run = fail = err = skip = 0
+          for f in sorted(glob.glob('target/surefire-reports/TEST-*.xml')):
+              r = ET.parse(f).getroot()
+              run += int(r.get('tests', 0)); fail += int(r.get('failures', 0)); err += int(r.get('errors', 0)); skip += int(r.get('skipped', 0))
+              for tc in r.iter('testcase'):
+                  sk = tc.find('skipped')
+                  if sk is not None:
+                      print('[WARNING] Skipped test: %s#%s -- reason: %s' % (tc.get('classname'), tc.get('name'), sk.get('message') or (sk.text or '').strip() or 'no reason given'))
+          print('[INFO] Surefire totals: Tests run: %d, Failures: %d, Errors: %d, Skipped: %d' % (run, fail, err, skip))
+          PY
       - name: Build Test Report ${{ matrix.java }}
         if: ${{ always() }}
         run: |
@@ -64,13 +92,13 @@ jobs:
           mvn site -D generateReports=false -D maven.compiler.source=${{ matrix.java }} -D maven.compiler.target=${{ matrix.java }}
       - name: Upload Test Results ${{ matrix.java }}
         if: ${{ always() }}
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: Test Results ${{ matrix.java }}
           path: target/surefire-reports/
       - name: Upload Test Report ${{ matrix.java }}
         if: ${{ always() }}
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: Test Report ${{ matrix.java }}
           path: target/site/
@@ -78,7 +106,7 @@ jobs:
         run: mvn clean package -D maven.compiler.source=${{ matrix.java }} -D maven.compiler.target=${{ matrix.java }} -D maven.test.skip=true -D maven.site.skip=true
       - name: Upload Package Results ${{ matrix.java }}
         if: ${{ always() }}
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: Package Jar ${{ matrix.java }}
           path: target/*.jar
@@ -92,6 +120,9 @@ jobs:
         # build against supported Java LTS versions:
         java: [ 11 ]
     name: Java ${{ matrix.java }}
+    timeout-minutes: 40
+    env:
+      MAVEN_OPTS: -Xss4m
     steps:
       - uses: actions/checkout@v3
       - name: Set up JDK ${{ matrix.java }}
@@ -104,7 +135,26 @@ jobs:
         run: mvn clean compile -D maven.compiler.source=${{ matrix.java }} -D maven.compiler.target=${{ matrix.java }} -D maven.test.skip=true -D maven.site.skip=true -D maven.javadoc.skip=true
       - name: Run Tests ${{ matrix.java }}
         run: |
-          mvn test -D maven.compiler.source=${{ matrix.java }} -D maven.compiler.target=${{ matrix.java }}
+          if [ -n "${{ inputs.test-filter }}" ]; then
+            mvn test -D maven.compiler.source=${{ matrix.java }} -D maven.compiler.target=${{ matrix.java }} -D test="${{ inputs.test-filter }}" -D failIfNoTests=false -D surefire.failIfNoSpecifiedTests=false
+          else
+            mvn test -D maven.compiler.source=${{ matrix.java }} -D maven.compiler.target=${{ matrix.java }}
+          fi
+      - name: List Skipped Tests ${{ matrix.java }}
+        if: ${{ always() }}
+        run: |
+          python3 - <<'PY'
+          import glob, xml.etree.ElementTree as ET
+          run = fail = err = skip = 0
+          for f in sorted(glob.glob('target/surefire-reports/TEST-*.xml')):
+              r = ET.parse(f).getroot()
+              run += int(r.get('tests', 0)); fail += int(r.get('failures', 0)); err += int(r.get('errors', 0)); skip += int(r.get('skipped', 0))
+              for tc in r.iter('testcase'):
+                  sk = tc.find('skipped')
+                  if sk is not None:
+                      print('[WARNING] Skipped test: %s#%s -- reason: %s' % (tc.get('classname'), tc.get('name'), sk.get('message') or (sk.text or '').strip() or 'no reason given'))
+          print('[INFO] Surefire totals: Tests run: %d, Failures: %d, Errors: %d, Skipped: %d' % (run, fail, err, skip))
+          PY
       - name: Build Test Report ${{ matrix.java }}
         if: ${{ always() }}
         run: |
@@ -112,21 +162,21 @@ jobs:
           mvn site -D generateReports=false -D maven.compiler.source=${{ matrix.java }} -D maven.compiler.target=${{ matrix.java }}
       - name: Upload Test Results ${{ matrix.java }}
         if: ${{ always() }}
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: Test Results ${{ matrix.java }}
           path: target/surefire-reports/
       - name: Upload Test Report ${{ matrix.java }}
         if: ${{ always() }}
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: Test Report ${{ matrix.java }}
           path: target/site/
       - name: Package Jar ${{ matrix.java }}
         run: mvn clean package -D maven.compiler.source=${{ matrix.java }} -D maven.compiler.target=${{ matrix.java }} -D maven.test.skip=true -D maven.site.skip=true
       - name: Upload Package Results ${{ matrix.java }}
-        if: ${{ always() }}
-        uses: actions/upload-artifact@v3
+        if: ${{ false }}
+        uses: actions/upload-artifact@v4
         with:
           name: Package Jar ${{ matrix.java }}
           path: target/*.jar
@@ -140,6 +190,9 @@ jobs:
         # build against supported Java LTS versions:
         java: [ 17 ]
     name: Java ${{ matrix.java }}
+    timeout-minutes: 40
+    env:
+      MAVEN_OPTS: -Xss4m
     steps:
       - uses: actions/checkout@v3
       - name: Set up JDK ${{ matrix.java }}
@@ -152,7 +205,26 @@ jobs:
         run: mvn clean compile -D maven.compiler.source=${{ matrix.java }} -D maven.compiler.target=${{ matrix.java }} -D maven.test.skip=true -D maven.site.skip=true -D maven.javadoc.skip=true
       - name: Run Tests ${{ matrix.java }}
         run: |
-          mvn test -D maven.compiler.source=${{ matrix.java }} -D maven.compiler.target=${{ matrix.java }}
+          if [ -n "${{ inputs.test-filter }}" ]; then
+            mvn test -D maven.compiler.source=${{ matrix.java }} -D maven.compiler.target=${{ matrix.java }} -D test="${{ inputs.test-filter }}" -D failIfNoTests=false -D surefire.failIfNoSpecifiedTests=false
+          else
+            mvn test -D maven.compiler.source=${{ matrix.java }} -D maven.compiler.target=${{ matrix.java }}
+          fi
+      - name: List Skipped Tests ${{ matrix.java }}
+        if: ${{ always() }}
+        run: |
+          python3 - <<'PY'
+          import glob, xml.etree.ElementTree as ET
+          run = fail = err = skip = 0
+          for f in sorted(glob.glob('target/surefire-reports/TEST-*.xml')):
+              r = ET.parse(f).getroot()
+              run += int(r.get('tests', 0)); fail += int(r.get('failures', 0)); err += int(r.get('errors', 0)); skip += int(r.get('skipped', 0))
+              for tc in r.iter('testcase'):
+                  sk = tc.find('skipped')
+                  if sk is not None:
+                      print('[WARNING] Skipped test: %s#%s -- reason: %s' % (tc.get('classname'), tc.get('name'), sk.get('message') or (sk.text or '').strip() or 'no reason given'))
+          print('[INFO] Surefire totals: Tests run: %d, Failures: %d, Errors: %d, Skipped: %d' % (run, fail, err, skip))
+          PY
       - name: Build Test Report ${{ matrix.java }}
         if: ${{ always() }}
         run: |
@@ -160,21 +232,21 @@ jobs:
           mvn site -D generateReports=false -D maven.compiler.source=${{ matrix.java }} -D maven.compiler.target=${{ matrix.java }}
       - name: Upload Test Results ${{ matrix.java }}
         if: ${{ always() }}
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: Test Results ${{ matrix.java }}
           path: target/surefire-reports/
       - name: Upload Test Report ${{ matrix.java }}
         if: ${{ always() }}
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: Test Report ${{ matrix.java }}
           path: target/site/
       - name: Package Jar ${{ matrix.java }}
         run: mvn clean package -D maven.compiler.source=${{ matrix.java }} -D maven.compiler.target=${{ matrix.java }} -D maven.test.skip=true -D maven.site.skip=true
       - name: Upload Package Results ${{ matrix.java }}
-        if: ${{ always() }}
-        uses: actions/upload-artifact@v3
+        if: ${{ false }}
+        uses: actions/upload-artifact@v4
         with:
           name: Package Jar ${{ matrix.java }}
           path: target/*.jar
@@ -188,6 +260,9 @@ jobs:
         # build against supported Java LTS versions:
         java: [ 21 ]
     name: Java ${{ matrix.java }}
+    timeout-minutes: 40
+    env:
+      MAVEN_OPTS: -Xss4m
     steps:
       - uses: actions/checkout@v3
       - name: Set up JDK ${{ matrix.java }}
@@ -200,7 +275,26 @@ jobs:
         run: mvn clean compile -D maven.compiler.source=${{ matrix.java }} -D maven.compiler.target=${{ matrix.java }} -D maven.test.skip=true -D maven.site.skip=true -D maven.javadoc.skip=true
       - name: Run Tests ${{ matrix.java }}
         run: |
-          mvn test -D maven.compiler.source=${{ matrix.java }} -D maven.compiler.target=${{ matrix.java }}
+          if [ -n "${{ inputs.test-filter }}" ]; then
+            mvn test -D maven.compiler.source=${{ matrix.java }} -D maven.compiler.target=${{ matrix.java }} -D test="${{ inputs.test-filter }}" -D failIfNoTests=false -D surefire.failIfNoSpecifiedTests=false
+          else
+            mvn test -D maven.compiler.source=${{ matrix.java }} -D maven.compiler.target=${{ matrix.java }}
+          fi
+      - name: List Skipped Tests ${{ matrix.java }}
+        if: ${{ always() }}
+        run: |
+          python3 - <<'PY'
+          import glob, xml.etree.ElementTree as ET
+          run = fail = err = skip = 0
+          for f in sorted(glob.glob('target/surefire-reports/TEST-*.xml')):
+              r = ET.parse(f).getroot()
+              run += int(r.get('tests', 0)); fail += int(r.get('failures', 0)); err += int(r.get('errors', 0)); skip += int(r.get('skipped', 0))
+              for tc in r.iter('testcase'):
+                  sk = tc.find('skipped')
+                  if sk is not None:
+                      print('[WARNING] Skipped test: %s#%s -- reason: %s' % (tc.get('classname'), tc.get('name'), sk.get('message') or (sk.text or '').strip() or 'no reason given'))
+          print('[INFO] Surefire totals: Tests run: %d, Failures: %d, Errors: %d, Skipped: %d' % (run, fail, err, skip))
+          PY
       - name: Build Test Report ${{ matrix.java }}
         if: ${{ always() }}
         run: |
@@ -208,21 +302,21 @@ jobs:
           mvn site -D generateReports=false -D maven.compiler.source=${{ matrix.java }} -D maven.compiler.target=${{ matrix.java }}
       - name: Upload Test Results ${{ matrix.java }}
         if: ${{ always() }}
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: Test Results ${{ matrix.java }}
           path: target/surefire-reports/
       - name: Upload Test Report ${{ matrix.java }}
         if: ${{ always() }}
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: Test Report ${{ matrix.java }}
           path: target/site/
       - name: Package Jar ${{ matrix.java }}
         run: mvn clean package -D maven.compiler.source=${{ matrix.java }} -D maven.compiler.target=${{ matrix.java }} -D maven.test.skip=true -D maven.site.skip=true
       - name: Upload Package Results ${{ matrix.java }}
-        if: ${{ always() }}
-        uses: actions/upload-artifact@v3
+        if: ${{ false }}
+        uses: actions/upload-artifact@v4
         with:
           name: Package Jar ${{ matrix.java }}
           path: target/*.jar
